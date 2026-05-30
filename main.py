@@ -10,7 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 # ⚙️ ASOSIY SOZLAMALAR
 TOKEN = "8654330963:AAHz1fjClGFiuMB4lmzTjQVofA9AXnb_cmw"
-ADMIN_ID = 6363577395  # 👈 AGAR TELEGRAM ID-INGIZ O'ZGARGANDAN BO'LSA, TO'G'RILAB QO'YING!
+ADMIN_ID = 6905227976  # 👈 AGAR TELEGRAM ID-INGIZ O'ZGARGANDAN BO'LSA, TO'G'RILAB QO'YING!
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
