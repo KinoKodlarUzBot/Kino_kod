@@ -10,23 +10,25 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 # ⚙️ ASOSIY SOZLAMALAR
 TOKEN = "8654330963:AAHz1fjClGFiuMB4lmzTjQVofA9AXnb_cmw"
-ADMIN_ID = 6905227976  # 👈 AGAR TELEGRAM ID-INGIZ O'ZGARGANDAN BO'LSA, TO'G'RILAB QO'YING!
+ADMIN_ID = 6905227976  # Shaxsiy Telegram ID raqamingiz
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# 🗄 MA'LUMOTLAR BAZASINI SOZLASH (SQLite)
+# 🗄 MA'LUMOTLAR BAZASINI SOZLASH
 conn = sqlite3.connect("bot_data.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# Jadvallarni yaratish (Sozlamalar va Kinolar uchun)
+# Sozlamalar jadvali
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
 )
 """)
+
+# Kinolar jadvali
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS films (
     code TEXT PRIMARY KEY,
@@ -34,25 +36,30 @@ CREATE TABLE IF NOT EXISTS films (
     caption TEXT
 )
 """)
+
+# 🔥 YANGI: Foydalanuvchilarni hisoblash jadvali
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY
+)
+""")
 conn.commit()
 
-# Standart sozlamalarni boshlang'ich kiritish (Agar baza bo'sh bo'lsa)
+# Boshlang'ich majburiy obuna sozlamalari
 try:
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('channel_id', '-1002323674089')")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('channel_link', 'https://t.me/+fuM6hLyhJ6ZhNzEy')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('channels_id', '-1002323674089')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('channels_link', 'https://t.me/+fuM6hLyhJ6ZhNzEy')")
     conn.commit()
 except Exception:
     pass
 
-# 🎭 FSM (Admin ketma-ketlik shtatlari)
 class AdminStates(StatesGroup):
     waiting_for_video = State()
     waiting_for_code = State()
     waiting_for_caption = State()
-    waiting_for_channel_id = State()
-    waiting_for_channel_link = State()
+    waiting_for_channels_id = State()
+    waiting_for_channels_link = State()
 
-# --- Dinamik funksiyalar (Bazadan o'qish va yozish) ---
 def get_setting(key):
     cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
     res = cursor.fetchone()
@@ -62,35 +69,84 @@ def set_setting(key, value):
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
 
-async def check_subscription(user_id: int) -> bool:
+# 👤 Yangi odam kirganida bazaga qo'shish funksiyasi
+def add_user(user_id):
     try:
-        ch_id = int(get_setting("channel_id"))
-        member = await bot.get_chat_member(chat_id=ch_id, user_id=user_id)
-        if member.status in ["left", "kicked"]:
-            return False
-        return True
+        cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+        conn.commit()
     except Exception:
-        # Bot kanalda admin bo'lmasa yoki xato link bo'lsa tekshiruvdan o'tkazmaydi
-        return False
+        pass
 
-# --- /start buyrug'i ---
+# 📊 BARCHA KANALLARGA OBUNANI TEKSHIRISH
+async def check_all_subscriptions(user_id: int) -> bool:
+    ids_str = get_setting("channels_id")
+    if not ids_str:
+        return True
+    
+    channel_ids = [id.strip() for id in ids_str.split(",") if id.strip()]
+    
+    for ch_id in channel_ids:
+        try:
+            member = await bot.get_chat_member(chat_id=int(ch_id), user_id=user_id)
+            if member.status in ["left", "kicked"]:
+                return False
+        except Exception:
+            continue
+    return True
+
 @dp.message(CommandStart())
 async def start_cmd(msg: types.Message):
-    # Agar havola orqali kod bilan kirilgan bo'lsa (t.me/bot?start=230)
+    # Yangi odam start bossa, bazaga yozib qo'yamiz
+    add_user(msg.from_user.id)
+    
     args = msg.text.split()
     if len(args) > 1:
         code = args[1].strip()
         await send_movie_or_ask_sub(msg, code)
         return
 
-    first_name = msg.from_user.first_name
+    is_subscribed = await check_all_subscriptions(msg.from_user.id)
+    if not is_subscribed:
+        links_str = get_setting("channels_link")
+        links = [l.strip() for l in links_str.split(",") if l.strip()]
+        
+        inline_keyboard = []
+        for index, link in enumerate(links, start=1):
+            inline_keyboard.append([InlineKeyboardButton(text=f"{index} - kanal ↗️", url=link)])
+        
+        inline_keyboard.append([InlineKeyboardButton(text="✅ Tasdiqlash", callback_data="check_none")])
+        kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+        
+        await msg.answer("❌ Kechirasiz botimizdan foydalanishdan oldin ushbu kanallarga a'zo bo'lishingiz kerak.", reply_markup=kb)
+        return
+
     await msg.answer(
-        f"👋 Assalomu alaykum {first_name} botimizga xush kelibsiz.\n\n"
+        f"👋 Assalomu alaykum {msg.from_user.first_name} botimizga xush kelibsiz.\n\n"
         f"✍ *Kino kodini yuboring.*", 
         parse_mode="Markdown"
     )
 
-# --- /admin panel buyrug'i ---
+# 🔥 YANGI: ADMIN UCHUN STATISTIKA BUYRUG'I
+@dp.message(Command("stat"))
+async def show_statistics(msg: types.Message):
+    if msg.from_user.id != ADMIN_ID:
+        return
+    
+    # Bazadan odamlar sonini sanaymiz
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    
+    # Bazadan kinolar sonini sanaymiz
+    cursor.execute("SELECT COUNT(*) FROM films")
+    total_films = cursor.fetchone()[0]
+    
+    text = (
+        f"📊 **Bot statistikasi:**\n\n"
+        f"👤 **Jami foydalanuvchilar:** {total_users} ta\n"
+        f"🎬 **Jami yuklangan kinolar:** {total_films} ta"
+    )
+    await msg.answer(text, parse_mode="Markdown")
+
 @dp.message(Command("admin"))
 async def admin_panel(msg: types.Message):
     if msg.from_user.id != ADMIN_ID:
@@ -98,13 +154,12 @@ async def admin_panel(msg: types.Message):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Kino qo'shish", callback_data="admin_add_kino")],
-        [InlineKeyboardButton(text="📢 Kanal ID sini o'zgartirish", callback_data="admin_set_id")],
-        [InlineKeyboardButton(text="🔗 Kanal havolasini o'zgartirish", callback_data="admin_set_link")],
+        [InlineKeyboardButton(text="📢 Kanallar ID sini o'zgartirish", callback_data="admin_set_id")],
+        [InlineKeyboardButton(text="🔗 Kanallar havolalarini o'zgartirish", callback_data="admin_set_link")],
         [InlineKeyboardButton(text="📊 Hozirgi sozlamalar", callback_data="admin_view_settings")]
     ])
-    await msg.answer("⚙️ *Bot boshqaruv paneli:*", reply_markup=kb, divide_buttons=True, parse_mode="Markdown")
+    await msg.answer("⚙️ *Bot boshqaruv paneli:*", reply_markup=kb, parse_mode="Markdown")
 
-# --- Admin panel tugmalari boshqaruvi ---
 @dp.callback_query(F.data.startswith("admin_"))
 async def admin_callbacks(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id != ADMIN_ID:
@@ -113,12 +168,12 @@ async def admin_callbacks(call: types.CallbackQuery, state: FSMContext):
     action = call.data
     
     if action == "admin_view_settings":
-        ch_id = get_setting("channel_id")
-        ch_link = get_setting("channel_link")
+        ch_ids = get_setting("channels_id")
+        ch_links = get_setting("channels_link")
         cursor.execute("SELECT COUNT(*) FROM films")
         total_films = cursor.fetchone()[0]
         
-        text = f"📊 *Hozirgi sozlamalar:*\n\n📢 Kanal ID: `{ch_id}`\n🔗 Kanal Linki: {ch_link}\n🎬 Jami kinolar: {total_films} ta"
+        text = f"📊 *Hozirgi sozlamalar:*\n\n📢 Kanallar ID: `{ch_ids}`\n🔗 Kanallar Linklari: {ch_links}\n🎬 Jami kinolar: {total_films} ta"
         await call.message.answer(text, parse_mode="Markdown")
         await call.answer()
         
@@ -128,20 +183,19 @@ async def admin_callbacks(call: types.CallbackQuery, state: FSMContext):
         await call.answer()
         
     elif action == "admin_set_id":
-        await call.message.answer("✍ Yangi kanal ID sini yuboring (Masalan: -10012345678):")
-        await state.set_state(AdminStates.waiting_for_channel_id)
+        await call.message.answer("✍ Yangi kanallar ID larini **vergul** bilan ajratib yuboring:\n\n*Masalan:* `-100123, -100456`", parse_mode="Markdown")
+        await state.set_state(AdminStates.waiting_for_channels_id)
         await call.answer()
         
     elif action == "admin_set_link":
-        await call.message.answer("✍ Yangi kanal taklif havolasini (linkini) yuboring:")
-        await state.set_state(AdminStates.waiting_for_channel_link)
+        await call.message.answer("✍ Yangi kanallar linklarini **vergul** bilan ajratib yuboring:\n\n*Masalan:* `https://t.me/link1, https://t.me/link2`", parse_mode="Markdown")
+        await state.set_state(AdminStates.waiting_for_channels_link)
         await call.answer()
 
-# --- FSM jarayonlari (Admin tomonidan ma'lumot kiritilishi) ---
 @dp.message(AdminStates.waiting_for_video, F.video)
 async def process_video(msg: types.Message, state: FSMContext):
     await state.update_data(file_id=msg.video.file_id)
-    await msg.answer("🔢 Endi ushbu kino uchun *KOD* yuboring (Masalan: 230):", parse_mode="Markdown")
+    await msg.answer("🔢 Endi ushbu kino uchun *KOD* yuboring:", parse_mode="Markdown")
     await state.set_state(AdminStates.waiting_for_code)
 
 @dp.message(AdminStates.waiting_for_code)
@@ -157,38 +211,40 @@ async def process_caption(msg: types.Message, state: FSMContext):
     file_id = data['file_id']
     caption = msg.text
     
-    # Bazaga yozish (Agar o'sha kodli kino bo'lsa, ustidan yangilab yozadi)
     cursor.execute("INSERT OR REPLACE INTO films (code, file_id, caption) VALUES (?, ?, ?)", (code, file_id, caption))
     conn.commit()
     
     await msg.answer(f"✅ *Kino muvaffaqiyatli saqlandi!*\n🔑 Kodi: `{code}`", parse_mode="Markdown")
     await state.clear()
 
-@dp.message(AdminStates.waiting_for_channel_id)
-async def process_ch_id(msg: types.Message, state: FSMContext):
-    set_setting("channel_id", msg.text.strip())
-    await msg.answer("✅ Kanal ID-si bazada yangilandi!")
+@dp.message(AdminStates.waiting_for_channels_id)
+async def process_ch_ids(msg: types.Message, state: FSMContext):
+    set_setting("channels_id", msg.text.strip())
+    await msg.answer("✅ Kanallar ID-lari bazada yangilandi!")
     await state.clear()
 
-@dp.message(AdminStates.waiting_for_channel_link)
-async def process_ch_link(msg: types.Message, state: FSMContext):
-    set_setting("channel_link", msg.text.strip())
-    await msg.answer("✅ Kanal havolasi bazada yangilandi!")
+@dp.message(AdminStates.waiting_for_channels_link)
+async def process_ch_links(msg: types.Message, state: FSMContext):
+    set_setting("channels_link", msg.text.strip())
+    await msg.answer("✅ Kanallar havolalari bazada yangilandi!")
     await state.clear()
 
-# --- Kinoni tekshirish va yuborish mantiqi ---
 async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False):
     user_id = msg.from_user.id if is_callback else msg.chat.id
+    add_user(msg.from_user.id) # Har ehtimolga qarshi yana bazaga tekshiramiz
     
-    # 1. Obunani tekshirish
-    is_subscribed = await check_subscription(msg.from_user.id)
-    ch_link = get_setting("channel_link")
+    is_subscribed = await check_all_subscriptions(msg.from_user.id)
+    links_str = get_setting("channels_link")
     
     if not is_subscribed:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="1 - kanal ↗️", url=ch_link)],
-            [InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"check_{code}")]
-        ])
+        links = [l.strip() for l in links_str.split(",") if l.strip()]
+        
+        inline_keyboard = []
+        for index, link in enumerate(links, start=1):
+            inline_keyboard.append([InlineKeyboardButton(text=f"{index} - kanal ↗️", url=link)])
+        
+        inline_keyboard.append([InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"check_{code}")])
+        kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
         
         text = "❌ Kechirasiz botimizdan foydalanishdan oldin ushbu kanallarga a'zo bo'lishingiz kerak."
         if is_callback:
@@ -198,7 +254,6 @@ async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False
             await msg.reply(text, reply_markup=kb)
         return
 
-    # 2. Obuna bo'lsa, kinoni bazadan qidirish
     cursor.execute("SELECT file_id, caption FROM films WHERE code=?", (code,))
     res = cursor.fetchone()
     
@@ -221,26 +276,27 @@ async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False
     else:
         await bot.send_message(chat_id=user_id, text="❌ Kechirasiz, bunday kodli kino topilmadi.")
 
-# --- Matnli xabar kelganda (Oddiy odam kod yuborganda) ---
 @dp.message()
 async def text_handler(msg: types.Message):
     await send_movie_or_ask_sub(msg, msg.text.strip())
 
-# --- "Tasdiqlash" tugmasi bosilganda ---
 @dp.callback_query(F.data.startswith("check_"))
 async def check_callback(call: types.CallbackQuery):
     code = call.data.split("_")[1]
-    if await check_subscription(call.from_user.id):
-        await send_movie_or_ask_sub(call.message, code, is_callback=True)
+    if await check_all_subscriptions(call.from_user.id):
+        if code == "none" or not code:
+            try: await call.message.delete()
+            except: pass
+            await call.message.answer("✅ **Tabriklayman, obuna tasdiqlandi!**\n\n🎬 Endi o'zingiz ko'rmoqchi bo'lgan kino kodini yuboring:", parse_mode="Markdown")
+        else:
+            await send_movie_or_ask_sub(call.message, code, is_callback=True)
     else:
-        await call.answer("🚫 Siz hali ham kanalga a'zo bo'lmadingiz!", show_alert=True)
+        await call.answer("🚫 Siz hali barcha kanallarga a'zo bo'lmadingiz!", show_alert=True)
 
-# --- Xabarni o'chirish (❌ tugmasi) ---
 @dp.callback_query(F.data == "delete_msg")
 async def delete_callback(call: types.CallbackQuery):
     await call.message.delete()
 
-# --- Botni ishga tushirish ---
 async def main():
     await dp.start_polling(bot)
 
