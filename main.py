@@ -20,6 +20,9 @@ dp = Dispatcher(storage=MemoryStorage())
 conn = sqlite3.connect("bot_data.db", check_same_thread=False)
 cursor = conn.cursor()
 
+# Katta trafikda baza qulflanib qolmasligi uchun WAL rejimini yoqamiz
+cursor.execute("PRAGMA journal_mode=WAL;")
+
 # Sozlamalar jadvali
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS settings (
@@ -53,15 +56,15 @@ try:
 except Exception:
     pass
 
-# ✨ YANGILANDI: Yangi holatlar qo'shildi
+# Admin holatlari
 class AdminStates(StatesGroup):
     waiting_for_video = State()
     waiting_for_code = State()
     waiting_for_caption = State()
     waiting_for_channels_id = State()
     waiting_for_channels_link = State()
-    waiting_for_del_code = State()  # O'chirish uchun
-    waiting_for_reklama = State()   # Reklama uchun
+    waiting_for_del_code = State()  
+    waiting_for_reklama = State()   
 
 def get_setting(key):
     cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
@@ -79,7 +82,7 @@ def add_user(user_id):
     except Exception:
         pass
 
-# 🔥 YANGILANDI: Trafik daxshatli ko'p bo'lganda ham qotmaydigan tizim
+# 🔥 TRAFIK KO'P BO'LGANDA HAM QOTMAYDIGAN OBUNA TEKSHIRUVI
 async def check_all_subscriptions(user_id: int) -> bool:
     ids_str = get_setting("channels_id")
     if not ids_str:
@@ -93,7 +96,7 @@ async def check_all_subscriptions(user_id: int) -> bool:
             if member.status in ["left", "kicked"]:
                 return False
         except Exception as e:
-            # Agar Telegram ko'p so'rov uchun vaqtincha bloklasa (FloodWait), bot qotmasligi uchun o'tkazib yuboradi
+            # Agar Telegram ko'p so'rov uchun FloodWait bersa, bot qotmasligi uchun o'tkazib yuboradi
             if "retry after" in str(e).lower():
                 return True
             continue
@@ -148,7 +151,6 @@ async def show_statistics(msg: types.Message):
     )
     await msg.answer(text, parse_mode="Markdown")
 
-# 🔥 YANGILANDI: Admin panelga yangi tugmalar qo'shildi
 @dp.message(Command("admin"))
 async def admin_panel(msg: types.Message):
     if msg.from_user.id != ADMIN_ID:
@@ -164,7 +166,6 @@ async def admin_panel(msg: types.Message):
     ])
     await msg.answer("⚙️ *Bot boshqaruv paneli:*", reply_markup=kb, parse_mode="Markdown")
 
-# 🔥 YANGILANDI: Yangi callback funksiyalar qo'shildi
 @dp.callback_query(F.data.startswith("admin_"))
 async def admin_callbacks(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id != ADMIN_ID:
@@ -227,7 +228,6 @@ async def process_caption(msg: types.Message, state: FSMContext):
     await msg.answer(f"✅ *Kino muvaffaqiyatli saqlandi!*\n🔑 Kodi: `{code}`", parse_mode="Markdown")
     await state.clear()
 
-# 🔥 YANGI: Kinoni o'chirish jarayoni
 @dp.message(AdminStates.waiting_for_del_code)
 async def process_delete_movie(msg: types.Message, state: FSMContext):
     code = msg.text.strip()
@@ -240,7 +240,6 @@ async def process_delete_movie(msg: types.Message, state: FSMContext):
         await msg.answer(f"⚠️ Bazada `{code}` kodli kino topilmadi!", parse_mode="Markdown")
     await state.clear()
 
-# 🔥 YANGI: Reklama tarqatish (Mailing) jarayoni
 @dp.message(AdminStates.waiting_for_reklama)
 async def process_send_reklama(msg: types.Message, state: FSMContext):
     await msg.answer("🚀 Reklama daxshatli tezlikda yuborilmoqda, kuting...")
@@ -254,7 +253,7 @@ async def process_send_reklama(msg: types.Message, state: FSMContext):
         try:
             await msg.copy_to(chat_id=u[0])
             success += 1
-            await asyncio.sleep(0.05)  # Blok tushmasligi uchun o'ta muhim pauza
+            await asyncio.sleep(0.05)  
         except Exception:
             failed += 1
             
@@ -323,20 +322,36 @@ async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False
 async def text_handler(msg: types.Message):
     await send_movie_or_ask_sub(msg, msg.text.strip())
 
+# 🔥 CHEKSIZ ZAGRUZKANI DAVOLAYDIGAN ENG ASOSIY FUNKSIYA
 @dp.callback_query(F.data.startswith("check_"))
 async def check_callback(call: types.CallbackQuery):
+    try:
+        await call.answer()  
+    except Exception:
+        pass
+        
     code = call.data.split("_")[1]
-    await call.answer()  # Qotib qolishni oldini oladi
+    user_subscribed = await check_all_subscriptions(call.from_user.id)
     
-    if await check_all_subscriptions(call.from_user.id):
+    if user_subscribed:
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
+            
         if code == "none" or not code:
-            try: await call.message.delete()
-            except: pass
-            await call.message.answer("✅ **Tabriklayman, obuna tasdiqlandi!**\n\n🎬 Endi o'zingiz ko'rmoqchi bo'lgan kino kodini yuboring:", parse_mode="Markdown")
+            await bot.send_message(
+                chat_id=call.from_user.id, 
+                text="✅ **Tabriklayman, obuna tasdiqlandi!**\n\n🎬 Endi o'zingiz ko'rmoqchi bo'lgan kino kodini yuboring:", 
+                parse_mode="Markdown"
+            )
         else:
             await send_movie_or_ask_sub(call.message, code, is_callback=True)
     else:
-        await call.answer("🚫 Siz hali barcha kanallarga a'zo bo'lmadingiz!", show_alert=True)
+        try:
+            await call.answer("🚫 Siz hali barcha kanallarga a'zo bo'lmadingiz!", show_alert=True)
+        except Exception:
+            pass
 
 @dp.callback_query(F.data == "delete_msg")
 async def delete_callback(call: types.CallbackQuery):
