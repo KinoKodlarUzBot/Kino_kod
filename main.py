@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sqlite3
+import os  # 👈 Maxfiy o'zgaruvchilar bilan ishlash uchun qo'shildi
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -8,9 +9,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# ⚙️ ASOSIY SOZLAMALAR
-TOKEN = "8654330963:AAHz1fjClGFiuMB4lmzTjQVofA9AXnb_cmw"
-ADMIN_ID = 6905227976  # Shaxsiy Telegram ID raqamingiz
+# ⚙️ ASOSIY SOZLAMALAR - RAILWAY ICHIDAN MAXFIY OLINADI!
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "6905227976"))  # Railway'dan ID kelsa oladi, bo'lmasa shu ID qoladi
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -48,7 +49,7 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 conn.commit()
 
-# Boshlang'ich majburiy obuna sozlamalari
+# Boshlang'ich majburiy obuna sozlamalari - O'ZINGIZNING KANALINGIZ MA'LUMOTLARI REZERV SIFATIDA
 try:
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('channels_id', '-1002323674089')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('channels_link', 'https://t.me/+fuM6hLyhJ6ZhNzEy')")
@@ -96,7 +97,6 @@ async def check_all_subscriptions(user_id: int) -> bool:
             if member.status in ["left", "kicked"]:
                 return False
         except Exception as e:
-            # Agar Telegram ko'p so'rov uchun FloodWait bersa, bot qotmasligi uchun o'tkazib yuboradi
             if "retry after" in str(e).lower():
                 return True
             continue
@@ -322,7 +322,6 @@ async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False
 async def text_handler(msg: types.Message):
     await send_movie_or_ask_sub(msg, msg.text.strip())
 
-# 🔥 CHEKSIZ ZAGRUZKANI DAVOLAYDIGAN ENG ASOSIY FUNKSIYA
 @dp.callback_query(F.data.startswith("check_"))
 async def check_callback(call: types.CallbackQuery):
     try:
