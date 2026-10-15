@@ -368,8 +368,15 @@ async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False
             except: pass
             
         await bot.send_chat_action(chat_id=user_id, action="upload_video")
-        # 🟢 Xatolik to'g'irlandi: parse_mode olib tashlandi
-        await bot.send_video(chat_id=user_id, video=file_id, caption=full_caption, reply_markup=kb)
+        
+        # 🔒 protect_content=True orqali saqlash va forward taqiqlandi
+        await bot.send_video(
+            chat_id=user_id, 
+            video=file_id, 
+            caption=full_caption, 
+            reply_markup=kb,
+            protect_content=True
+        )
         
         fastpari_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎁 Ro'yxatdan o'tish va Bonus olish", url=FASTPARI_LINK)]])
         await bot.send_message(chat_id=user_id, text=REKLAMA_TEXT, reply_markup=fastpari_kb, parse_mode="Markdown")
@@ -395,12 +402,13 @@ async def send_episode_video(call: types.CallbackQuery):
         
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌", callback_data="delete_msg")]])
         
-        # 🟢 Xatolik to'g'irlandi: parse_mode olib tashlandi
+        # 🔒 protect_content=True orqali saqlash va forward taqiqlandi
         await bot.send_video(
             chat_id=call.from_user.id,
             video=file_id,
             caption=full_caption,
-            reply_markup=kb
+            reply_markup=kb,
+            protect_content=True
         )
     await call.answer()
 
