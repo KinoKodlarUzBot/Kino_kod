@@ -13,8 +13,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 TOKEN = os.getenv("BOT_TOKEN", "SIZNING_BOT_TOKENINGIZ")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6905227976"))
 
-# FASTPARI REFERAL HAVOLASI
-FASTPARI_LINK = "https://refpa15124.com/L?tag=d_6094755m_95572c_&site=6094755&ad=95572"
+# STANDART FASTPARI REFERAL HAVOLASI (REZERV SIFATIDA)
+DEFAULT_FASTPARI_LINK = "https://refpa15124.com/L?tag=d_6094755m_95572c_&site=6094755&ad=95572"
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -58,9 +58,11 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 conn.commit()
 
+# Boshlang'ich sozlamalar
 try:
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('channels_id', '-1002323674089')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('channels_link', 'https://t.me/+fuM6hLyhJ6ZhNzEy')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('fastpari_link', ?)", (DEFAULT_FASTPARI_LINK,))
     conn.commit()
 except Exception:
     pass
@@ -77,6 +79,7 @@ class AdminStates(StatesGroup):
 
     waiting_for_channels_id = State()
     waiting_for_channels_link = State()
+    waiting_for_fastpari_link = State()  # 👈 Fastpari linkini o'zgartirish uchun
     waiting_for_del_code = State()  
     waiting_for_reklama = State()   
 
@@ -178,6 +181,7 @@ async def admin_panel(msg: types.Message):
         [InlineKeyboardButton(text="❌ Kinoni o'chirish", callback_data="admin_del_kino")],
         [InlineKeyboardButton(text="📢 Kanallar ID sini o'zgartirish", callback_data="admin_set_id")],
         [InlineKeyboardButton(text="🔗 Kanallar havolalarini o'zgartirish", callback_data="admin_set_link")],
+        [InlineKeyboardButton(text="🎰 Fastpari havolasini o'zgartirish", callback_data="admin_set_fastpari")], # 👈 YANGI TUGMA
         [InlineKeyboardButton(text="📢 Reklama tarqatish", callback_data="admin_send_reklama")],
         [InlineKeyboardButton(text="📊 Hozirgi sozlamalar", callback_data="admin_view_settings")]
     ])
@@ -194,10 +198,17 @@ async def admin_callbacks(call: types.CallbackQuery, state: FSMContext):
     if action == "admin_view_settings":
         ch_ids = get_setting("channels_id")
         ch_links = get_setting("channels_link")
+        fastpari_link = get_setting("fastpari_link") or DEFAULT_FASTPARI_LINK
         cursor.execute("SELECT COUNT(*) FROM films")
         total_films = cursor.fetchone()[0]
         
-        text = f"📊 *Hozirgi sozlamalar:*\n\n📢 Kanallar ID: `{ch_ids}`\n🔗 Kanallar Linklari: {ch_links}\n🎬 Jami kinolar: {total_films} ta"
+        text = (
+            f"📊 *Hozirgi sozlamalar:*\n\n"
+            f"📢 Kanallar ID: `{ch_ids}`\n"
+            f"🔗 Kanallar Linklari: {ch_links}\n"
+            f"🎰 Fastpari Linki: {fastpari_link}\n"
+            f"🎬 Jami kinolar: {total_films} ta"
+        )
         await call.message.answer(text, parse_mode="Markdown")
         
     elif action == "admin_add_kino":
@@ -223,6 +234,16 @@ async def admin_callbacks(call: types.CallbackQuery, state: FSMContext):
     elif action == "admin_set_link":
         await call.message.answer("✍ Yangi kanallar linklarini **vergul** bilan ajratib yuboring:\n\n*Masalan:* `https://t.me/link1,https://t.me/link2`", parse_mode="Markdown")
         await state.set_state(AdminStates.waiting_for_channels_link)
+
+    elif action == "admin_set_fastpari":
+        await call.message.answer("✍ Yangi Fastpari referal havolasini yuboring:\n\n*Masalan:* `https://refpa15124.com/L?...`", parse_mode="Markdown")
+        await state.set_state(AdminStates.waiting_for_fastpari_link)
+
+@dp.message(AdminStates.waiting_for_fastpari_link)
+async def process_fastpari_link(msg: types.Message, state: FSMContext):
+    set_setting("fastpari_link", msg.text.strip())
+    await msg.answer("✅ Fastpari havolasi bazada muvaffaqiyatli yangilandi!")
+    await state.clear()
 
 @dp.message(AdminStates.waiting_for_video, F.video)
 async def process_video(msg: types.Message, state: FSMContext):
@@ -400,9 +421,10 @@ async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False
         await bot.send_chat_action(chat_id=user_id, action="upload_video")
         await bot.send_video(chat_id=user_id, video=file_id, caption=caption, reply_markup=kb)
         
-        # 🟢 Fastpari Reklamasi (Oddiy kino uchun)
+        # 🟢 Fastpari Reklamasi (Oddiy kino uchun - bazadan olinadi)
+        fastpari_link = get_setting("fastpari_link") or DEFAULT_FASTPARI_LINK
         fastpari_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📥 Fastpari ilovasini yuklab olish", url=FASTPARI_LINK)]
+            [InlineKeyboardButton(text="📥 Fastpari ilovasini yuklab olish", url=fastpari_link)]
         ])
         await bot.send_message(
             chat_id=user_id, 
@@ -434,9 +456,10 @@ async def send_episode_video(call: types.CallbackQuery):
             parse_mode="Markdown"
         )
         
-        # 🟢 Fastpari Reklamasi (Serial qismi uchun)
+        # 🟢 Fastpari Reklamasi (Serial qismi uchun - bazadan olinadi)
+        fastpari_link = get_setting("fastpari_link") or DEFAULT_FASTPARI_LINK
         fastpari_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📥 Fastpari ilovasini yuklab olish", url=FASTPARI_LINK)]
+            [InlineKeyboardButton(text="📥 Fastpari ilovasini yuklab olish", url=fastpari_link)]
         ])
         await bot.send_message(
             chat_id=call.from_user.id,
