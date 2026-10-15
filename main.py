@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import sqlite3
-import os  # 👈 Maxfiy o'zgaruvchilar bilan ishlash uchun qo'shildi
+import os
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -9,9 +9,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# ⚙️ ASOSIY SOZLAMALAR - RAILWAY ICHIDAN MAXFIY OLINADI!
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "6905227976"))  # Railway'dan ID kelsa oladi, bo'lmasa shu ID qoladi
+# ⚙️ ASOSIY SOZLAMALAR - RAILWAY YOKI ENV DAN O'QISH
+TOKEN = os.getenv("BOT_TOKEN", "SIZNING_BOT_TOKENINGIZ")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "6905227976"))
+
+# FASTPARI REFERAL HAVOLASI
+FASTPARI_LINK = "https://refpa15124.com/L?tag=d_6094755m_95572c_&site=6094755&ad=95572"
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -21,10 +24,8 @@ dp = Dispatcher(storage=MemoryStorage())
 conn = sqlite3.connect("bot_data.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# Katta trafikda baza qulflanib qolmasligi uchun WAL rejimini yoqamiz
 cursor.execute("PRAGMA journal_mode=WAL;")
 
-# Sozlamalar jadvali
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -32,7 +33,6 @@ CREATE TABLE IF NOT EXISTS settings (
 )
 """)
 
-# Kinolar jadvali
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS films (
     code TEXT PRIMARY KEY,
@@ -41,7 +41,16 @@ CREATE TABLE IF NOT EXISTS films (
 )
 """)
 
-# Foydalanuvchilarni hisoblash jadvali
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS episodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT,
+    episode_num INTEGER,
+    file_id TEXT,
+    caption TEXT
+)
+""")
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY
@@ -49,7 +58,6 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 conn.commit()
 
-# Boshlang'ich majburiy obuna sozlamalari - O'ZINGIZNING KANALINGIZ MA'LUMOTLARI REZERV SIFATIDA
 try:
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('channels_id', '-1002323674089')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('channels_link', 'https://t.me/+fuM6hLyhJ6ZhNzEy')")
@@ -57,11 +65,16 @@ try:
 except Exception:
     pass
 
-# Admin holatlari
 class AdminStates(StatesGroup):
     waiting_for_video = State()
     waiting_for_code = State()
     waiting_for_caption = State()
+    
+    waiting_for_serial_code = State()
+    waiting_for_episode_num = State()
+    waiting_for_episode_video = State()
+    waiting_for_episode_caption = State()
+
     waiting_for_channels_id = State()
     waiting_for_channels_link = State()
     waiting_for_del_code = State()  
@@ -83,7 +96,6 @@ def add_user(user_id):
     except Exception:
         pass
 
-# 🔥 TRAFIK KO'P BO'LGANDA HAM QOTMAYDIGAN OBUNA TEKSHIRUVI
 async def check_all_subscriptions(user_id: int) -> bool:
     ids_str = get_setting("channels_id")
     if not ids_str:
@@ -143,11 +155,15 @@ async def show_statistics(msg: types.Message):
     
     cursor.execute("SELECT COUNT(*) FROM films")
     total_films = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(DISTINCT code) FROM episodes")
+    total_serials = cursor.fetchone()[0]
     
     text = (
         f"📊 **Bot statistikasi:**\n\n"
         f"👤 **Jami foydalanuvchilar:** {total_users} ta\n"
-        f"🎬 **Jami yuklangan kinolar:** {total_films} ta"
+        f"🎬 **Yagona kinolar:** {total_films} ta\n"
+        f"📺 **Seriallar soni:** {total_serials} ta"
     )
     await msg.answer(text, parse_mode="Markdown")
 
@@ -158,7 +174,8 @@ async def admin_panel(msg: types.Message):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Kino qo'shish", callback_data="admin_add_kino"),
-         InlineKeyboardButton(text="❌ Kinoni o'chirish", callback_data="admin_del_kino")],
+         InlineKeyboardButton(text="🎬 Serialga qism qo'shish", callback_data="admin_add_episode")],
+        [InlineKeyboardButton(text="❌ Kinoni o'chirish", callback_data="admin_del_kino")],
         [InlineKeyboardButton(text="📢 Kanallar ID sini o'zgartirish", callback_data="admin_set_id")],
         [InlineKeyboardButton(text="🔗 Kanallar havolalarini o'zgartirish", callback_data="admin_set_link")],
         [InlineKeyboardButton(text="📢 Reklama tarqatish", callback_data="admin_send_reklama")],
@@ -186,9 +203,13 @@ async def admin_callbacks(call: types.CallbackQuery, state: FSMContext):
     elif action == "admin_add_kino":
         await call.message.answer("📹 Menga kino videosini yuboring:")
         await state.set_state(AdminStates.waiting_for_video)
+
+    elif action == "admin_add_episode":
+        await call.message.answer("🔑 Serial uchun umumiy *KOD* yuboring (masalan: `344`):", parse_mode="Markdown")
+        await state.set_state(AdminStates.waiting_for_serial_code)
         
     elif action == "admin_del_kino":
-        await call.message.answer("❌ O'chirmoqchi bo'lgan kino *KODINI* yuboring:", parse_mode="Markdown")
+        await call.message.answer("❌ O'chirmoqchi bo'lgan kino yoki serial *KODINI* yuboring:", parse_mode="Markdown")
         await state.set_state(AdminStates.waiting_for_del_code)
         
     elif action == "admin_send_reklama":
@@ -228,21 +249,56 @@ async def process_caption(msg: types.Message, state: FSMContext):
     await msg.answer(f"✅ *Kino muvaffaqiyatli saqlandi!*\n🔑 Kodi: `{code}`", parse_mode="Markdown")
     await state.clear()
 
+@dp.message(AdminStates.waiting_for_serial_code)
+async def process_serial_code(msg: types.Message, state: FSMContext):
+    await state.update_data(serial_code=msg.text.strip())
+    await msg.answer("🔢 Ushbu qism nechanchi qism ekanligini raqamda yuboring (masalan: `10`):", parse_mode="Markdown")
+    await state.set_state(AdminStates.waiting_for_episode_num)
+
+@dp.message(AdminStates.waiting_for_episode_num)
+async def process_episode_num(msg: types.Message, state: FSMContext):
+    if not msg.text.isdigit():
+        await msg.answer("⚠️ Iltimos, faqat raqam kiriting (masalan: 10):")
+        return
+    await state.update_data(episode_num=int(msg.text.strip()))
+    await msg.answer("📹 Endi shu qismning *VIDEOSINI* yuboring:", parse_mode="Markdown")
+    await state.set_state(AdminStates.waiting_for_episode_video)
+
+@dp.message(AdminStates.waiting_for_episode_video, F.video)
+async def process_episode_video(msg: types.Message, state: FSMContext):
+    await state.update_data(file_id=msg.video.file_id)
+    await msg.answer("📝 Endi bu qism uchun *TAVSIFI (Caption)* matnini yuboring\n(Masalan: *Katta sichqon / 10-qism*):", parse_mode="Markdown")
+    await state.set_state(AdminStates.waiting_for_episode_caption)
+
+@dp.message(AdminStates.waiting_for_episode_caption)
+async def process_episode_caption(msg: types.Message, state: FSMContext):
+    data = await state.get_data()
+    code = data['serial_code']
+    ep_num = data['episode_num']
+    file_id = data['file_id']
+    caption = msg.text
+    
+    cursor.execute(
+        "INSERT INTO episodes (code, episode_num, file_id, caption) VALUES (?, ?, ?, ?)",
+        (code, ep_num, file_id, caption)
+    )
+    conn.commit()
+    
+    await msg.answer(f"✅ *Serial qismi saqlandi!*\n🔑 Kodi: `{code}`\n🔢 Qism: `{ep_num}-qism`", parse_mode="Markdown")
+    await state.clear()
+
 @dp.message(AdminStates.waiting_for_del_code)
 async def process_delete_movie(msg: types.Message, state: FSMContext):
     code = msg.text.strip()
-    cursor.execute("SELECT code FROM films WHERE code=?", (code,))
-    if cursor.fetchone():
-        cursor.execute("DELETE FROM films WHERE code=?", (code,))
-        conn.commit()
-        await msg.answer(f"❌ `{code}` kodli kino bazadan muvaffaqiyatli o'chirildi!", parse_mode="Markdown")
-    else:
-        await msg.answer(f"⚠️ Bazada `{code}` kodli kino topilmadi!", parse_mode="Markdown")
+    cursor.execute("DELETE FROM films WHERE code=?", (code,))
+    cursor.execute("DELETE FROM episodes WHERE code=?", (code,))
+    conn.commit()
+    await msg.answer(f"❌ `{code}` kodli barcha kino va qismlar bazadan o'chirildi!", parse_mode="Markdown")
     await state.clear()
 
 @dp.message(AdminStates.waiting_for_reklama)
 async def process_send_reklama(msg: types.Message, state: FSMContext):
-    await msg.answer("🚀 Reklama daxshatli tezlikda yuborilmoqda, kuting...")
+    await msg.answer("🚀 Reklama yuborilmoqda...")
     await state.clear()
     
     cursor.execute("SELECT user_id FROM users")
@@ -262,13 +318,13 @@ async def process_send_reklama(msg: types.Message, state: FSMContext):
 @dp.message(AdminStates.waiting_for_channels_id)
 async def process_ch_ids(msg: types.Message, state: FSMContext):
     set_setting("channels_id", msg.text.strip())
-    await msg.answer("✅ Kanallar ID-lari bazada yangilandi!")
+    await msg.answer("✅ Kanallar ID-lari yangilandi!")
     await state.clear()
 
 @dp.message(AdminStates.waiting_for_channels_link)
 async def process_ch_links(msg: types.Message, state: FSMContext):
     set_setting("channels_link", msg.text.strip())
-    await msg.answer("✅ Kanallar havolalari bazada yangilandi!")
+    await msg.answer("✅ Kanallar havolalari yangilandi!")
     await state.clear()
 
 async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False):
@@ -280,7 +336,6 @@ async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False
     
     if not is_subscribed:
         links = [l.strip() for l in links_str.split(",") if l.strip()]
-        
         inline_keyboard = []
         for index, link in enumerate(links, start=1):
             inline_keyboard.append([InlineKeyboardButton(text=f"{index} - kanal ↗️", url=link)])
@@ -294,6 +349,35 @@ async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False
             except: pass
         else:
             await msg.reply(text, reply_markup=kb)
+        return
+
+    cursor.execute("SELECT episode_num, caption FROM episodes WHERE code=? ORDER BY episode_num ASC", (code,))
+    episodes = cursor.fetchall()
+    
+    if episodes:
+        text = f"🎬 **Kino qismlari ro'yxati:**\n\n"
+        
+        inline_keyboard = []
+        row = []
+        for ep in episodes:
+            ep_num = ep[0]
+            film_title = ep[1].split('/')[0].strip() if ep[1] else "Kino"
+            text += f"{ep_num}. {film_title} / {ep_num}-qism\n"
+            
+            row.append(InlineKeyboardButton(text=str(ep_num), callback_data=f"ep_{code}_{ep_num}"))
+            if len(row) == 5:
+                inline_keyboard.append(row)
+                row = []
+        if row:
+            inline_keyboard.append(row)
+            
+        inline_keyboard.append([InlineKeyboardButton(text="❌ Yopish", callback_data="delete_msg")])
+        kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+        
+        if is_callback:
+            try: await msg.delete()
+            except: pass
+        await bot.send_message(chat_id=user_id, text=text, reply_markup=kb, parse_mode="Markdown")
         return
 
     cursor.execute("SELECT file_id, caption FROM films WHERE code=?", (code,))
@@ -315,8 +399,52 @@ async def send_movie_or_ask_sub(msg: types.Message, code: str, is_callback=False
             
         await bot.send_chat_action(chat_id=user_id, action="upload_video")
         await bot.send_video(chat_id=user_id, video=file_id, caption=caption, reply_markup=kb)
+        
+        # 🟢 Fastpari Reklamasi (Oddiy kino uchun)
+        fastpari_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Fastpari ilovasini yuklab olish", url=FASTPARI_LINK)]
+        ])
+        await bot.send_message(
+            chat_id=user_id, 
+            text="📱 **Rasmiy Fastpari ilovasini yuklab oling va bonuslarga ega bo'ling!** 👇", 
+            reply_markup=fastpari_kb, 
+            parse_mode="Markdown"
+        )
     else:
         await bot.send_message(chat_id=user_id, text="❌ Kechirasiz, bunday kodli kino topilmadi.")
+
+@dp.callback_query(F.data.startswith("ep_"))
+async def send_episode_video(call: types.CallbackQuery):
+    _, code, ep_num = call.data.split("_")
+    
+    cursor.execute("SELECT file_id, caption FROM episodes WHERE code=? AND episode_num=?", (code, ep_num))
+    res = cursor.fetchone()
+    
+    if res:
+        file_id, caption = res[0], res[1]
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌", callback_data="delete_msg")]
+        ])
+        
+        await bot.send_video(
+            chat_id=call.from_user.id,
+            video=file_id,
+            caption=caption,
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+        
+        # 🟢 Fastpari Reklamasi (Serial qismi uchun)
+        fastpari_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Fastpari ilovasini yuklab olish", url=FASTPARI_LINK)]
+        ])
+        await bot.send_message(
+            chat_id=call.from_user.id,
+            text="📱 **Rasmiy Fastpari ilovasini yuklab oling va yuqori bonuslarga ega bo'ling!** 👇",
+            reply_markup=fastpari_kb,
+            parse_mode="Markdown"
+        )
+    await call.answer()
 
 @dp.message()
 async def text_handler(msg: types.Message):
@@ -324,37 +452,27 @@ async def text_handler(msg: types.Message):
 
 @dp.callback_query(F.data.startswith("check_"))
 async def check_callback(call: types.CallbackQuery):
-    try:
-        await call.answer()  
-    except Exception:
-        pass
+    try: await call.answer() 
+    except: pass
         
     code = call.data.split("_")[1]
     user_subscribed = await check_all_subscriptions(call.from_user.id)
     
     if user_subscribed:
-        try:
-            await call.message.delete()
-        except Exception:
-            pass
+        try: await call.message.delete()
+        except: pass
             
         if code == "none" or not code:
-            await bot.send_message(
-                chat_id=call.from_user.id, 
-                text="✅ **Tabriklayman, obuna tasdiqlandi!**\n\n🎬 Endi o'zingiz ko'rmoqchi bo'lgan kino kodini yuboring:", 
-                parse_mode="Markdown"
-            )
+            await bot.send_message(call.from_user.id, "✅ **Obuna tasdiqlandi!** Kino kodini yuboring:", parse_mode="Markdown")
         else:
             await send_movie_or_ask_sub(call.message, code, is_callback=True)
     else:
-        try:
-            await call.answer("🚫 Siz hali barcha kanallarga a'zo bo'lmadingiz!", show_alert=True)
-        except Exception:
-            pass
+        await call.answer("🚫 Siz hali barcha kanallarga a'zo bo'lmadingiz!", show_alert=True)
 
 @dp.callback_query(F.data == "delete_msg")
 async def delete_callback(call: types.CallbackQuery):
-    await call.message.delete()
+    try: await call.message.delete()
+    except: pass
 
 async def main():
     await dp.start_polling(bot)
